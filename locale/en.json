@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Prompt Forge",
+    "description": "A spark entry in the composer tool row: reads the current draft, rewrites it into an agent-ready prompt, then previews and adopts it. Unique: hard-fact fidelity gate + acceptance completion + workspace-document awareness."
+  }
+}
