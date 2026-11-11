@@ -24,21 +24,6 @@
 - **改写判定**——定稿后同一条链路判四个信号（保真 / 深度 / 落地性 / 可执行性），**只标注不改字**。判不出来渲染成灰色，绝不渲染成通过——沉默不能被读成批准。
 - **费用计量**——`usageTotal` 汇总本次全部模型调用（含事实修复、验收重试、判定），`cost` 按峰谷费率折算。没有用量回报时是 `null`，界面显示「费用未知（不等于免费）」。
 
-## ⚠️ 插件市场里那条升级别点
-
-市场会把本插件标成 outdated（本地 `0.6.0`，latest 指向 `1.2.2`）。**那条升级不能点。**
-
-`dsh-prompt-forge` 这个名字在 npm 上属于别人的包（`github.com/Aliboder/dsh-prompt-forge`），与本插件**同名异物**。点下去 profile 里的 `link:` 会被换成那个 npm 包，本地这套代码当场脱钩——保真闸、验收补全、工作区文档、费用计量全部消失。
-
-<details>
-<summary><strong>怎么判定是同名异物</strong></summary>
-
-看特征字符串而不是版本号：本地 `index.js` 命中 `NO_VERIFIABLE_ACCEPTANCE` / `maxWorkspaceDocs` / `/prompt-forge/api` / `settings-set` / `acceptance` / `diagnose` 六项，上游全不命中。上游从 `v1.0.0` 起就是 `lib/` + `test/` 多文件结构且带 CHANGELOG，本地是单文件 `index.js`。
-
-要彻底解耦就改名（如 `dsh-prompt-forge-local`），需同步改 `cordis.patch.yml` 的 `name` 与 profile 里的 `link:` 路径。不改的话角标一直红着，是已知噪音，不影响运行。
-
-</details>
-
 ## 安装
 
 需要 DeepSeek Harness。版本区间看 `package.json` 的 `engines.dsh`，不满足时宿主会直接拦下并说明原因。
