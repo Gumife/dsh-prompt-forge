@@ -143,6 +143,34 @@ window.__ModuleLoader__.load({
      */
     const pendingWrites = new Map();
 
+    /* sessionId -> { from, to }: the last replacement this plugin wrote into a
+     * composer, kept so the trigger can offer one-click undo. Keyed by session
+     * for the same reason as pendingWrites — the card unmounts on a session
+     * switch, and the record has to outlive it. An entry is honoured only while
+     * the composer still holds exactly `to`; once the user types or presses
+     * Ctrl+Z, the record is dropped and the click means "rewrite" again. */
+    const lastApply = new Map();
+
+    /* One composer write = three persisted flushes, at three tick depths. The
+     * host projects the composer into its per-session store on its own schedule,
+     * so a single persistDraft() fired in the same tick as setDraft can run
+     * before that store has seen the new text — and a session switch right
+     * afterwards then reads the OLD draft back. The microtask lands after the
+     * editor commit, the frame after React's re-render. Re-flushing an already
+     * persisted draft is a no-op, so the extra calls are free. */
+    function flushDraft(actions) {
+      if (!actions || typeof actions.persistDraft !== 'function') return;
+      actions.persistDraft();
+      Promise.resolve().then(() => {
+        try { actions.persistDraft(); } catch (error) { /* the draft is already in the editor */ }
+      });
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          try { actions.persistDraft(); } catch (error) { /* frame torn down before we ran */ }
+        });
+      }
+    }
+
     async function api(command, payload, signal) {
       const res = await fetch('/prompt-forge/api', {
         method: 'POST',
@@ -233,6 +261,10 @@ window.__ModuleLoader__.load({
  * busy signal, so the dim was redundant here; the ring now runs at full opacity
  * and reads as the near-black reference does. */
 .pf-btn[data-busy="true"]{opacity:1}
+/* The second click takes the rewrite back instead of starting another. Tone
+ * shifts, shape does not: the spark still means "this button writes the draft",
+ * the tint says "this time it writes it back". */
+.pf-btn[data-undo="true"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary))}
 /* Both marks stay mounted and the state is carried by opacity alone. Swapping
  * the elements instead (a ternary on busy) made the button blink: the spark
  * vanished and the ring appeared in the same frame, which reads as a redraw
@@ -246,6 +278,13 @@ window.__ModuleLoader__.load({
 .pf-glyph .ico{position:absolute;inset:0;transition:opacity 120ms linear}
 .pf-glyph-idle .ico{opacity:1}
 .pf-glyph-busy .ico{opacity:0}
+/* Third layer: the "this click takes it back" mark. Hidden by default like the
+ * spinner, revealed by data-undo. Busy wins over undo — a running request means
+ * the cancel semantics, never the revert. */
+.pf-glyph-undo .ico{opacity:0}
+.pf-btn[data-undo="true"] .pf-glyph-idle .ico{opacity:0}
+.pf-btn[data-undo="true"] .pf-glyph-undo .ico{opacity:1}
+.pf-btn[data-busy="true"] .pf-glyph-undo .ico{opacity:0}
 .pf-btn[data-busy="true"] .pf-glyph-idle .ico{opacity:0}
 /* The spin lives on the ring mark itself, not on .ico: both marks are mounted at
  * all times, so an .ico-wide animation would also spin the spark while it fades
@@ -433,6 +472,26 @@ window.__ModuleLoader__.load({
       },
         h('circle', { className: 'pf-spin-arc', cx: '10', cy: '10', r: '8',
           fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round' }));
+    }
+
+    /* The undo mark: a half-circle arc with its arrowhead on the open end. Shown
+     * only while the trigger's click would take the last rewrite back — leaving
+     * the spark there would promise a fresh rewrite the click is not going to
+     * perform. Drawn with strokes rather than the filled path the spark uses: a
+     * solid arrow at 15px collapses into a blob, while a 1.55 stroke keeps both
+     * the arc and the head legible. */
+    function UndoIcon() {
+      return h('svg', { className: 'ico', viewBox: '0 0 16 16', 'aria-hidden': true, focusable: 'false' },
+        h('path', {
+          d: 'M4.4 5.8 H9.0 A3.4 3.4 0 0 1 9.0 12.6 H6.8',
+          fill: 'none', stroke: 'currentColor',
+          'stroke-width': '1.55', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        }),
+        h('path', {
+          d: 'M6.9 3.3 L4.1 5.8 L6.9 8.3',
+          fill: 'none', stroke: 'currentColor',
+          'stroke-width': '1.55', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        }));
     }
 
     /* ── settings (P2) ──────────────────────────────────────────────────
@@ -781,7 +840,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function ForgeCard({ ctx, sessionId, t, runRef, cancelRef, onBusy, open, pos, popRef, onMouseEnter, onMouseLeave }) {
+    function ForgeCard({ ctx, sessionId, t, runRef, cancelRef, undoRef, onBusy, onCanUndo, open, pos, popRef, onMouseEnter, onMouseLeave }) {
       const { draft, actions, ready } = useComposerDraft(ctx, sessionId);
       const { settings, update } = useSettings(sessionId);
       const [busy, setBusy] = React.useState(false);
@@ -865,27 +924,11 @@ window.__ModuleLoader__.load({
           return true;
         }
         actions.setDraft(body.rewrite);
-        if (typeof actions.persistDraft === 'function') {
-          /* Three flushes, deliberately not one. The host writes the composer
-           * into its per-session store on its own schedule, so a single call
-           * made in the same tick as setDraft can run before that store has
-           * seen the new text and persist the OLD draft instead. Switching
-           * sessions immediately afterwards disposes this session's shell, and
-           * coming back reads that stale value once — which is exactly how the
-           * rewrite used to disappear. The microtask lands after the editor
-           * commit; the frame lands after React has re-rendered. Re-flushing a
-           * draft that already persisted is a no-op, so the cost of the extra
-           * two calls is zero. */
-          actions.persistDraft();
-          Promise.resolve().then(() => {
-            try { actions.persistDraft(); } catch (error) { /* the draft is already in the editor */ }
-          });
-          if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(() => {
-              try { actions.persistDraft(); } catch (error) { /* frame torn down before we ran */ }
-            });
-          }
-        }
+        /* Remember what was overwritten so the trigger's next click can undo it.
+         * Recorded only on a real edit — the identical-text branch above returns
+         * before reaching this line. */
+        if (sessionId) lastApply.set(sessionId, { from, to: body.rewrite });
+        flushDraft(actions);
         /* The notice is a paint, the write is the deliverable: only the paint
          * depends on this card still being mounted. */
         if (mountedRef.current) {
@@ -905,7 +948,53 @@ window.__ModuleLoader__.load({
           });
         }
         return true;
-      }, [actions, settings.mode]);
+      }, [actions, sessionId, settings.mode]);
+
+      /* Whether the trigger's next click should mean "undo". True only while the
+       * composer still holds exactly what we last wrote: once the text differs,
+       * the record describes a past we can no longer reconstruct, and offering
+       * undo there would overwrite whatever the user typed since. */
+      const applied = sessionId ? lastApply.get(sessionId) : null;
+      const canUndo = !!applied && draft === applied.to;
+
+      const undo = React.useCallback(() => {
+        if (!sessionId) return false;
+        const rec = lastApply.get(sessionId);
+        if (!rec) return false;
+        /* The composer moved on — typed into, or already undone by hand. Drop the
+         * record and let this click start a fresh rewrite instead. */
+        if (draft !== rec.to) {
+          lastApply.delete(sessionId);
+          return false;
+        }
+        if (!actions || typeof actions.setDraft !== 'function') return false;
+        actions.setDraft(rec.from);
+        flushDraft(actions);
+        lastApply.delete(sessionId);
+        if (mountedRef.current) {
+          setResult(null);
+          setNotice({
+            rewrite: rec.from,
+            before: rec.to.length,
+            after: rec.from.length,
+            facts: null,
+            acceptance: null,
+            judge: null,
+            truncated: false,
+            mode: settings.mode,
+            reverted: true,
+          });
+        }
+        return true;
+      }, [actions, draft, sessionId, settings.mode]);
+
+      /* Publish the undo handle and its availability to the trigger, which owns
+       * the click. Same shape as runRef/cancelRef: the button knows whether this
+       * click starts work or takes it back, never how a write is made. */
+      if (undoRef) undoRef.current = undo;
+      React.useEffect(() => {
+        if (onCanUndo) onCanUndo(canUndo);
+      }, [canUndo, onCanUndo]);
 
       /* Deliver a rewrite that landed while this session was in the background.
        * Runs once the fresh actions are available, i.e. after the shell for
@@ -1064,7 +1153,7 @@ window.__ModuleLoader__.load({
         const accText = acceptanceText(notice.acceptance, t);
         const accWarn = acceptanceWarn(notice.acceptance);
         body = h('div', { className: 'pf-done' },
-          h('span', { className: 'pf-done-h' }, notice.same ? t('unchanged') : t('replaced')),
+          h('span', { className: 'pf-done-h' }, notice.reverted ? t('reverted') : (notice.same ? t('unchanged') : t('replaced'))),
           h('span', { className: 'pf-done-b' },
             notice.before + ' → ' + notice.after + ' ' + t('chars')
             + (factText ? ' · ' + factText : '')
@@ -1142,6 +1231,17 @@ window.__ModuleLoader__.load({
       const closeTimer = React.useRef(null);
       const { pos, place } = usePopoverPlacement(open, triggerRef, popRef);
 
+      /* Added after every pre-existing hook on purpose. verify-client.mjs keys
+       * some assertions off slot INDICES (slots[0] = open, slots[1] = busy), so
+       * inserting a hook earlier shifts every ref below and silently mis-seats
+       * the harness's seeded values. Appending keeps those indices intact.
+       *
+       * undoRef: same contract as cancelRef — the card publishes a function that
+       * returns true only when it actually reverted something.
+       * canUndo: mirrors the card's verdict, used only for the label and tint. */
+      const undoRef = React.useRef(null);
+      const [canUndo, setCanUndo] = React.useState(false);
+
       /* Hover is the way IN: the panel exists to expose the three settings. It
        * is opened by the pointer, not by a click, and it leaves the stage as
        * soon as the pointer does (see scheduleClose) — the panel must never sit
@@ -1205,6 +1305,12 @@ window.__ModuleLoader__.load({
           if (typeof cancel === 'function') cancel();
           return;
         }
+        /* A rewrite that already landed turns the same click into its undo. The
+         * card decides whether that is still honest — the composer must hold
+         * exactly what we wrote — and returns false when it is not, so the click
+         * falls through to a new rewrite. */
+        const undo = undoRef.current;
+        if (typeof undo === 'function' && undo()) return;
         const run = runRef.current;
         if (typeof run === 'function') run();
       }, [busy, openNow]);
@@ -1225,7 +1331,8 @@ window.__ModuleLoader__.load({
           ref: triggerRef,
           type: 'button',
           className: 'pf-btn',
-          'aria-label': t('btnTitle'),
+          'aria-label': canUndo ? t('undoTitle') : t('btnTitle'),
+          title: canUndo ? t('undoTitle') : t('btnTitle'),
           'aria-expanded': open ? 'true' : 'false',
           /* Declares the panel as a popup, so assistive tech announces
            * "expanded" meaningfully instead of reading a bare toggle. */
@@ -1238,6 +1345,9 @@ window.__ModuleLoader__.load({
            * progress cursor are driven off this attribute instead. */
           'aria-disabled': busy ? 'true' : 'false',
           'data-busy': busy ? 'true' : 'false',
+          /* Marks the click as a take-back rather than a write. Visual only —
+           * the decision was already made in fire(). */
+          'data-undo': canUndo ? 'true' : 'false',
           onMouseDown: (e) => e.preventDefault(),
           /* Hover alone left the panel unreachable from the keyboard and from
            * touch. onFocus covers Tab; onKeyDown covers Enter/Space, which a
@@ -1262,14 +1372,17 @@ window.__ModuleLoader__.load({
            * not change between idle and busy — only which mark is opaque does. */
         }, h('span', { className: 'pf-glyph' },
           h('span', { className: 'pf-glyph-idle' }, h(SparkIcon)),
-          h('span', { className: 'pf-glyph-busy' }, h(SpinIcon, { className: 'ico' })))),
+          h('span', { className: 'pf-glyph-busy' }, h(SpinIcon, { className: 'ico' })),
+          h('span', { className: 'pf-glyph-undo' }, h(UndoIcon)))),
         h(ForgeCard, {
           ctx,
           sessionId,
           t,
           runRef,
           cancelRef,
+          undoRef,
           onBusy: setBusy,
+          onCanUndo: setCanUndo,
           open,
           pos,
           popRef,
@@ -1285,6 +1398,7 @@ window.__ModuleLoader__.load({
         const dicts = {
           zh: {
             btnTitle: '提示词锻造：把口语化草稿改写成 agent 可执行的提示词',
+            undoTitle: '回退：把草稿恢复成改写前的样子',
             loading: '读取草稿中…',
             connOk: '服务已连通',
             connFail: '改写失败',
@@ -1300,6 +1414,7 @@ window.__ModuleLoader__.load({
             adopt: '采纳并替换',
             discard: '放弃',
             replaced: '已替换草稿',
+            reverted: '已回退到改写前',
             unchanged: '改写结果与原文一致',
             modePolish: '保真优化',
             modeAcceptance: '验收补全',
@@ -1341,6 +1456,7 @@ window.__ModuleLoader__.load({
           },
           en: {
             btnTitle: 'Prompt Forge: rewrite a rough draft into an agent-ready prompt',
+            undoTitle: 'Undo: restore the draft as it was before the rewrite',
             loading: 'Reading draft…',
             connOk: 'Host connected',
             connFail: 'Rewrite failed',
@@ -1356,6 +1472,7 @@ window.__ModuleLoader__.load({
             adopt: 'Adopt and replace',
             discard: 'Discard',
             replaced: 'Draft replaced',
+            reverted: 'Reverted to the original draft',
             unchanged: 'Rewrite matches the original',
             modePolish: 'Faithful',
             modeAcceptance: 'Acceptance',

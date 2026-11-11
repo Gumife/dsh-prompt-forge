@@ -183,7 +183,7 @@ ok('inject forwards sessionId verbatim', injected.sessionId === 'session-test');
 /* ── P1 dictionaries ───────────────────────────────────────────────────── */
 const zh = dicts['dsh-prompt-forge']?.zh ?? {};
 const en = dicts['dsh-prompt-forge']?.en ?? {};
-for (const key of ['replaced', 'unchanged', 'needDraft', 'labelOriginal', 'labelRewrite', 'adopt', 'discard', 'factKept', 'factFixed', 'factCapped', 'truncatedWarn', 'factInvented']) for (const key of ['costEstimate', 'costPeak', 'costOffPeak', 'costCalls', 'costUnknown']) {
+for (const key of ['replaced', 'unchanged', 'needDraft', 'labelOriginal', 'labelRewrite', 'adopt', 'discard', 'factKept', 'factFixed', 'factCapped', 'truncatedWarn', 'factInvented']) for (const key of ['costEstimate', 'costPeak', 'costOffPeak', 'costCalls', 'costUnknown', 'undoTitle', 'reverted']) {
   ok('zh dictionary has ' + key, typeof zh[key] === 'string' && zh[key].length > 0);
 }
 ok('zh and en carry the same keys',
@@ -842,6 +842,81 @@ const alertRun = async (payload, draftText) => {
   cardFrame.slots[0] = { draft: landed === null ? cardFrame.slots[0].draft : landed, actions: acts, ready: true };
   return { text: textOf(expand(left[0].component(props))).join(' '), tree: expand(left[0].component(props)) };
 };
+
+/* ── undo: the SAME click takes the rewrite back ──────────────────────────
+ * One button, two meanings. While the composer still holds exactly what the
+ * last click wrote, a click reverts it; in every other situation the click
+ * starts a new rewrite. Both halves are driven through the real click path,
+ * because a revert that only works when called directly would ship broken. */
+const originalDraft = '把 index.js 的路由改成 exact';
+const appliedRewrite = '把 `index.js` 的 /prompt-forge/api 路由注册改成 kind: exact。';
+let undoWritten = null;
+let undoPersisted = 0;
+const undoActs = {
+  setDraft: (text) => { undoWritten = text; },
+  persistDraft: () => { undoPersisted++; },
+};
+globalThis.fetch = async () => ({ json: async () => ({
+  ok: true,
+  rewrite: appliedRewrite,
+  facts: { total: 0, kept: 0, missing: [], repaired: false, reinjected: false },
+}) });
+cardFrame.slots[0] = { draft: originalDraft, actions: undoActs, ready: true };
+cardFrame.slots[5] = null;
+cardFrame.slots[6] = null;
+findTrigger(expand(left[0].component(props))).props.onClick();
+await new Promise((resolve) => setTimeout(resolve, 0));
+ok('the rewrite landed before undo can be offered', undoWritten === appliedRewrite, String(undoWritten).slice(0, 40));
+
+/* Re-render holding the written text — this is the state the user is looking
+ * at right after the rewrite lands. */
+cardFrame.slots[0] = { draft: undoWritten, actions: undoActs, ready: true };
+expand(left[0].component(props));
+/* The harness RECORDS effects instead of running them, so the card's report
+ * ("undo is available now") never lands on the trigger by itself. Flushing that
+ * one effect is what a real browser would do on the next frame. */
+const reportKey = Object.keys(cardFrame.effects || {}).find(
+  (k) => String(cardFrame.effects[k].fn).includes('onCanUndo'));
+ok('the card reports undo availability after a rewrite', reportKey !== undefined);
+await flushEffect(cardFrame, reportKey);
+const undoTree = expand(left[0].component(props));
+const undoTrigger = findTrigger(undoTree);
+ok('the trigger advertises undo while the rewrite still stands',
+  undoTrigger && undoTrigger.props['data-undo'] === 'true', JSON.stringify(undoTrigger && undoTrigger.props['data-undo']));
+ok('the label changes with the meaning, not just the colour',
+  undoTrigger && undoTrigger.props['aria-label'] === zh.undoTitle, String(undoTrigger && undoTrigger.props['aria-label']));
+ok('the undo mark is mounted as its own glyph layer',
+  classesOf(undoTree).some(c => c.includes('pf-glyph-undo')));
+
+/* The click itself. This is the whole feature: no second button, no prompt. */
+undoWritten = null;
+undoTrigger.props.onClick();
+ok('a second click restores the original draft', undoWritten === originalDraft, String(undoWritten).slice(0, 40));
+ok('the revert is flushed immediately like any other write', undoPersisted >= 1, 'persisted=' + undoPersisted);
+const undoFlushMark = undoPersisted;
+await new Promise((resolve) => setTimeout(resolve, 0));
+ok('the revert is flushed again after the editor commit', undoPersisted > undoFlushMark, 'persisted=' + undoPersisted);
+
+cardFrame.slots[0] = { draft: originalDraft, actions: undoActs, ready: true };
+expand(left[0].component(props));
+const revertReportKey = Object.keys(cardFrame.effects || {}).find(
+  (k) => String(cardFrame.effects[k].fn).includes('onCanUndo'));
+await flushEffect(cardFrame, revertReportKey);
+const undoRevertedTree = expand(left[0].component(props));
+const undoRevertedText = textOf(undoRevertedTree).join(' ');
+ok('the receipt says the draft was put back, not replaced', undoRevertedText.includes(zh.reverted), undoRevertedText.slice(0, 160));
+ok('undo is no longer offered once it has been used',
+  findTrigger(undoRevertedTree).props['data-undo'] !== 'true');
+
+/* Hand-edited after the rewrite: the record describes a past that no longer
+ * exists, and reverting there would destroy whatever the user typed since. The
+ * click must fall back to meaning "rewrite". */
+cardFrame.slots[0] = { draft: appliedRewrite + ' 另外补一句', actions: undoActs, ready: true };
+const editedTree = expand(left[0].component(props));
+ok('a hand-edited draft stops offering undo',
+  findTrigger(editedTree).props['data-undo'] !== 'true');
+ok('a hand-edited draft goes back to the rewrite label',
+  findTrigger(editedTree).props['aria-label'] === zh.btnTitle);
 
 const truncRun = await alertRun({
   rewrite: '把 X 改清楚，然后',
