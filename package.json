@@ -14,13 +14,45 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "verify-host.mjs", "verify-client.mjs", "verify-live.mjs"],
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "verify-host.mjs",
+    "verify-client.mjs",
+    "verify-live.mjs"
+  ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
-  }
+  },
+  "license": "MIT",
+  "author": "Gumife",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gumife/dsh-prompt-forge.git"
+  },
+  "homepage": "https://github.com/Gumife/dsh-prompt-forge#readme",
+  "bugs": {
+    "url": "https://github.com/Gumife/dsh-prompt-forge/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "prompt",
+    "prompt-engineering",
+    "llm",
+    "ui"
+  ]
 }

@@ -1,15 +1,42 @@
 # dsh-prompt-forge
 
+> **这是个人自用项目，不是通用产品。**
+> 它是我自己日常在用的工具，开源只是为了代码可读、可改、可搬零件。
+> 接口随我自己的需要变动，**不承诺向后兼容**；遇到问题欢迎提 Issue，但**不承诺响应时间**。
+> 你要用，请自己读代码、自己承担后果。
+
 把口语化草稿锻造为 agent 可执行提示词的 DSH 插件。差异化能力：**硬事实保真闸** + **验收补全** + **工作区文档感知** + **改写判定**。
 
 当前阶段：**P3 评估侧 + 费用计量已完成**（`/prompt-forge/api` 的 `rewrite` 命令：抽取硬事实 → 改写 → 逐字校验 → 至多一次修复 → 确定性回注；新增工作区文档上下文、验收补全模式、设置双写持久化；客户端读草稿、点击 ✦ 直接改写并替换草稿，不满意一次 Ctrl+Z 回退）。
 
-- 分期计划与验收口径：见 `KICKOFF.md`
 - P1：保真优化管线 + 硬事实闸 + 会话上下文 + 悬停选模式、点击即改写 ✅
 - P2：工作区文档上下文 + 验收补全模式 + 设置持久化 ✅
-- P3：README 完整化 + 发布决策 ✅（已定：暂不发，保持 `private` + 本地 Junction）
+- P3：README 完整化 + 开源到 GitHub（MIT 许可）✅
 - P3 追加：改写判定（评估侧）✅ —— 改写定稿后同一条链路判四个信号，只标注不改文本
 - 0.5.0：费用计量 ✅ —— `usageTotal` 汇总一次改写的**全部**模型调用，`cost` 按峰谷费率折算（当前版本 `0.5.0`）
+
+## 安装
+
+需要 DeepSeek Harness，版本区间由 `package.json` 的 `engines.dsh` 声明——不满足时宿主会直接拦下并说明原因。
+
+**方式一：直接从 GitHub 安装**（不用先克隆）
+
+```powershell
+plugin_manager install_bundle(target='github:Gumife/dsh-prompt-forge')
+```
+
+**方式二：克隆到本地，再指向目录**（适合要读代码、要改的情况）
+
+```powershell
+git clone https://github.com/Gumife/dsh-prompt-forge.git
+plugin_manager install_bundle(target='<你的克隆路径>/dsh-prompt-forge')
+```
+
+两种方式都不要手改 profile 的 `package.json` / `cordis.patch.yml`，也不要在 profile 目录跑 pnpm。卸载走 `plugin_manager` 的 `remove_bundle`，别手工删目录。
+
+**改完 `client.js` 或 `index.js` 必须整进程重启宿主才生效，刷新页面不够。**
+
+`github:` 源安装锁定当时的 HEAD commit，升级要重新执行一次安装；本地克隆 + Junction 安装则是改完重启即生效。
 
 ## 结构
 
@@ -242,7 +269,7 @@ localStorage 键，结果 B 项目静默继承了 A 项目的模式——用户�
 
 ## 避雷清单（九条，逐条落实）
 
-来自 `KICKOFF.md` 第六节，来源是 polish / improve / model-radar / winditer 的真实踩坑记录。**每条都写了本项目怎么落实、以及在哪能验证**——照抄清单不算过关，能指出证据才算。
+来源是 polish / improve / model-radar / winditer 的真实踩坑记录（早期整理在开发接力单里，该文件不入公开仓库）。**每条都写了本项目怎么落实、以及在哪能验证**——照抄清单不算过关，能指出证据才算。
 
 | # | 雷 | 本项目落实方式 | 证据在哪 |
 |---|---|---|---|
@@ -260,7 +287,9 @@ localStorage 键，结果 B 项目静默继承了 A 项目的模式——用户�
 
 ## 发布
 
-**当前状态：不发布。`private: true` 保持，本地 Junction 安装，当前版本 `0.5.0`。**
+**当前状态：已开源到 GitHub，MIT 许可，发行方式是 git 源安装，不发布 npm。`private: true` 保留。**
+
+> `private: true` 只阻止 `npm publish`，不阻止 git 源安装，等于给「误发 npm」留了一道保险。安装方式见上面「安装」一节。
 
 > 决策记录（2026-10-21）：用户选定「暂不发」。理由——P0–P2 刚闭环，接口还没有被外部用户验证过，此时对外承诺 API 稳定的收益远小于维护成本；等出现真实的外部使用需求再发，避免过早背兼容包袱。决策时版本为 `0.3.1`，诚实反映它经历过的三期迭代。
 >
@@ -269,21 +298,31 @@ localStorage 键，结果 B 项目静默继承了 A 项目的模式——用户�
 > 0.4.0：新增改写判定（评估侧）。这是小版本而不是补丁，因为响应体多了一个 `judge` 字段、`config` 多了一个 `capability.judge`，对外契约变了。发布决策不变——仍不发布。
 >
 > 0.5.0：新增费用计量。同样是**小版本而不是补丁**：响应体多了 `usageTotal` 与 `cost`，`config` 多了 `pricing`。发布决策不变——仍不发布。
+>
+> 2026-11-11：**改为开源到 GitHub（MIT）**。当初「等出现真实外部使用需求再发」这个前提不会自己满足，而现在的目标明确变成「让别人也能用、也能迭代」。走 git 源而不发 npm 有两个原因：npm 上 `dsh-prompt-forge` 已被别人占用（见下节），发上去只会制造同名混乱；且 `minimumReleaseAge` 对 git 源不生效。选 MIT 而非「暂不授权」是因为——没有许可证，别人法律上不能改、不能分发，「能迭代」就是空话。
 
 三种选择与真实代价（留档，将来要发时直接看这张表）：
 
 | 方式 | 怎么做 | 代价 / 风险 |
 |---|---|---|
-| **暂不发**（当前） | 保持 `private: true`，本地 Junction 装 | 零风险、零维护；别人用不了，只能自己用 |
+| **暂不发**（历史选择） | 保持 `private: true`，本地 Junction 装 | 零风险、零维护；别人用不了，只能自己用 |
 | **npm** | 去掉 `private`，补 `license` / `repository` / `keywords`，`npm publish` | 撞 `minimumReleaseAge`（避雷 #9）：新版本 24h 内可能被 profile 预检拦下，需要 `minimumReleaseAgeExclude` 或等 24h。另外要定 scope（是否 `@<scope>/dsh-prompt-forge`） |
-| **GitHub 源** | 推仓库，装包走 `plugin_manager install_bundle <git-url>` | 无 npm 的 24h 限制；但装包锁定 commit，升级要重新装 |
+| **GitHub 源**（当前采用） | 推仓库，装包走 `plugin_manager install_bundle(target='github:Gumife/dsh-prompt-forge')` | 无 npm 的 24h 限制；但装包锁定 commit，升级要重新装 |
 
-**将来真要发时，必须做的最小改动**：
+**已完成的开源准备（2026-11-11）**：
 
-1. `package.json`：删 `"private": true`
-2. 补 `"license"`（未定，建议 `MIT`）、`"repository"`、`"keywords"`
-3. 确认 `files` 白名单不含 `KICKOFF.md`、`.prompt-forge/`、临时验证脚本产物
+1. `LICENSE`（MIT）+ `package.json` 补 `license` / `author` / `repository` / `homepage` / `bugs` / `keywords`
+2. `CONTRIBUTING.md`：环境要求、验证命令、提交约定
+3. README 补「安装」节，移除本机绝对路径
+4. 开发接力单移出公开仓库（本地保留，`.gitignore` 排除）
+
+**如果将来确实要发 npm，还需额外做**：
+
+1. 删 `"private": true`
+2. 先处理与 npm 上同名包的冲突（见下节）：改 scope 或改名，别硬撞
+3. 确认 `files` 白名单不含 `.prompt-forge/` 与临时验证产物
 4. 发布前跑一次三套验证：`verify-host` + `verify-client` + `verify-live`
+5. 预期撞 `minimumReleaseAge`（避雷 #9）
 
 ## 与市场同名包的命名空间冲突（别点那条升级）
 
